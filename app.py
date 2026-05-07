@@ -1,8 +1,10 @@
 """
-Simulador de Variables de Proceso Industrial
-=============================================
-Cada variable tiene una distribución de probabilidad configurada por diseño.
-El usuario final solo ve los valores generados al presionar el botón.
+Simulador de Tiempos de Ciclo — Manufactura
+============================================
+Matriz 3 productos × 3 procesos.
+Cada celda tiene su propia distribución de probabilidad (oculta al usuario).
+
+ZONA DE DISEÑO — solo el ingeniero modifica este bloque.
 """
 
 import streamlit as st
@@ -10,255 +12,329 @@ import numpy as np
 from dataclasses import dataclass
 from typing import Callable
 
+# ══════════════════════════════════════════════════════════════════
+#  DEFINICIÓN DE PRODUCTOS Y PROCESOS
+# ══════════════════════════════════════════════════════════════════
+
+PRODUCTOS = [
+    {"id": "P1", "nombre": "Carcasa de Bomba",    "icono": "🔩"},
+    {"id": "P2", "nombre": "Engranaje Helicoidal", "icono": "⚙️"},
+    {"id": "P3", "nombre": "Soporte Estructural",  "icono": "🏗️"},
+]
+
+PROCESOS = [
+    {"id": "maquinado", "nombre": "Maquinado",          "icono": "🔧", "color": "#F59E0B"},
+    {"id": "fundicion", "nombre": "Fundición",           "icono": "🔥", "color": "#EF4444"},
+    {"id": "acabado",   "nombre": "Acabado Superficial", "icono": "✨", "color": "#10B981"},
+]
 
 # ══════════════════════════════════════════════════════════════════
-#  ZONA DE DISEÑO — Aquí se configuran las distribuciones.
-#  El usuario final NUNCA ve este bloque.
+#  DISTRIBUCIONES POR CELDA  (producto × proceso)
+#  Todas en segundos. rango_normal = (min_ok, max_ok).
+#
+#  Justificación de diseño:
+#    Maquinado   → Normal    (CNC controlado, baja variabilidad)
+#    Fundición   → LogNormal (cola larga por solidificación variable)
+#    Acabado     → Weibull   (tiempo hasta alcanzar rugosidad objetivo)
 # ══════════════════════════════════════════════════════════════════
 
 @dataclass
-class Variable:
-    nombre: str
-    unidad: str
-    descripcion: str
-    icono: str
+class Celda:
     generador: Callable[[], float]
-    decimales: int
-    rango_normal: tuple   # (min, max) para colorear el valor
+    rango_normal: tuple
+    unidad: str = "s"
+    decimales: int = 1
 
 
-VARIABLES: list[Variable] = [
-    Variable(
-        nombre="Temperatura de Horno",
-        unidad="°C",
-        descripcion="Temperatura interior del horno de fusión",
-        icono="🌡️",
-        generador=lambda: np.random.normal(loc=850.0, scale=12.5),
-        decimales=1,
-        rango_normal=(820, 880),
+MATRIZ: dict[tuple, Celda] = {
+    # ── CARCASA DE BOMBA ─────────────────────────────────────────
+    ("P1", "maquinado"): Celda(
+        generador=lambda: np.random.normal(loc=245, scale=18),
+        rango_normal=(200, 290),
     ),
-    Variable(
-        nombre="Presión de Línea",
-        unidad="bar",
-        descripcion="Presión en la línea de vapor principal",
-        icono="⚙️",
-        generador=lambda: np.random.lognormal(mean=np.log(6.5), sigma=0.08),
-        decimales=2,
-        rango_normal=(5.8, 7.2),
+    ("P1", "fundicion"): Celda(
+        generador=lambda: np.random.lognormal(mean=np.log(520), sigma=0.12),
+        rango_normal=(420, 640),
     ),
-    Variable(
-        nombre="Velocidad de Banda",
-        unidad="m/min",
-        descripcion="Velocidad de la banda transportadora",
-        icono="🏭",
-        generador=lambda: np.random.uniform(low=12.0, high=18.0),
-        decimales=2,
-        rango_normal=(13.0, 17.0),
+    ("P1", "acabado"): Celda(
+        generador=lambda: np.random.weibull(a=3.5) * 95,
+        rango_normal=(55, 135),
     ),
-    Variable(
-        nombre="Humedad Relativa",
-        unidad="%",
-        descripcion="Humedad en cámara de secado",
-        icono="💧",
-        generador=lambda: np.clip(np.random.beta(a=2.5, b=4.0) * 100, 20, 80),
-        decimales=1,
-        rango_normal=(30, 60),
+    # ── ENGRANAJE HELICOIDAL ──────────────────────────────────────
+    ("P2", "maquinado"): Celda(
+        generador=lambda: np.random.normal(loc=310, scale=22),
+        rango_normal=(260, 360),
     ),
-    Variable(
-        nombre="Tiempo de Ciclo",
-        unidad="s",
-        descripcion="Tiempo entre piezas (distribución Weibull)",
-        icono="⏱️",
-        generador=lambda: np.random.weibull(a=3.2) * 45,
-        decimales=1,
-        rango_normal=(30, 70),
+    ("P2", "fundicion"): Celda(
+        generador=lambda: np.random.lognormal(mean=np.log(390), sigma=0.10),
+        rango_normal=(320, 470),
     ),
-    Variable(
-        nombre="Defectos por Lote",
-        unidad="unid",
-        descripcion="Cantidad de piezas defectuosas (Poisson λ=2.3)",
-        icono="🔍",
-        generador=lambda: float(np.random.poisson(lam=2.3)),
-        decimales=0,
-        rango_normal=(0, 5),
+    ("P2", "acabado"): Celda(
+        generador=lambda: np.random.weibull(a=2.8) * 130,
+        rango_normal=(70, 185),
     ),
-]
-
-# Etiquetas de distribución (visibles en la UI como referencia técnica)
-DIST_LABELS = {
-    "Temperatura de Horno":  "Normal(μ=850, σ=12.5)",
-    "Presión de Línea":      "LogNormal(μ=6.5, σ=0.08)",
-    "Velocidad de Banda":    "Uniforme[12, 18]",
-    "Humedad Relativa":      "Beta(α=2.5, β=4.0)×100",
-    "Tiempo de Ciclo":       "Weibull(k=3.2, λ=45)",
-    "Defectos por Lote":     "Poisson(λ=2.3)",
+    # ── SOPORTE ESTRUCTURAL ───────────────────────────────────────
+    ("P3", "maquinado"): Celda(
+        generador=lambda: np.random.normal(loc=175, scale=14),
+        rango_normal=(140, 210),
+    ),
+    ("P3", "fundicion"): Celda(
+        generador=lambda: np.random.lognormal(mean=np.log(680), sigma=0.15),
+        rango_normal=(530, 860),
+    ),
+    ("P3", "acabado"): Celda(
+        generador=lambda: np.random.weibull(a=4.0) * 72,
+        rango_normal=(45, 100),
+    ),
 }
 
+DIST_NOMBRES = {
+    "maquinado": "Normal",
+    "fundicion":  "LogNormal",
+    "acabado":    "Weibull",
+}
 
 # ══════════════════════════════════════════════════════════════════
 #  CONFIGURACIÓN DE PÁGINA
 # ══════════════════════════════════════════════════════════════════
 
 st.set_page_config(
-    page_title="Simulador de Proceso",
+    page_title="Simulador de Tiempos · Manufactura",
     page_icon="🏭",
-    layout="centered",
+    layout="wide",
 )
 
-
 # ══════════════════════════════════════════════════════════════════
-#  CSS PERSONALIZADO
+#  CSS
 # ══════════════════════════════════════════════════════════════════
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@400;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
 
-html, body, [class*="css"] { font-family: 'Barlow', sans-serif; }
+html, body, [class*="css"] { font-family: 'Rajdhani', sans-serif; }
+.stApp { background: #111318; color: #D1D5DB; }
 
-.stApp { background-color: #0d1117; color: #e6edf3; }
-
-.sim-header {
-    text-align: center; padding: 2rem 0 1rem 0;
-    border-bottom: 1px solid #21262d; margin-bottom: 2rem;
+.hdr {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 1.4rem 2rem 1rem 2rem;
+    border-bottom: 1px solid #2D3140; margin-bottom: 1.8rem;
 }
-.sim-header h1 {
-    font-family: 'Share Tech Mono', monospace; font-size: 1.8rem;
-    color: #58a6ff; letter-spacing: 3px; margin: 0;
+.hdr-left h1 {
+    font-family: 'Rajdhani', sans-serif; font-weight: 700;
+    font-size: 1.6rem; letter-spacing: 4px; color: #F59E0B;
+    margin: 0; text-transform: uppercase;
 }
-.sim-header p {
-    color: #8b949e; font-size: 0.85rem; margin-top: 0.4rem;
-    letter-spacing: 1px; text-transform: uppercase;
+.hdr-left p {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem; color: #6B7280; margin: 0.2rem 0 0 0; letter-spacing: 2px;
 }
-
-.var-card {
-    background: #161b22; border: 1px solid #21262d;
-    border-radius: 10px; padding: 1.1rem 1.3rem;
-    margin-bottom: 1rem; position: relative; overflow: hidden;
-}
-.var-card::before {
-    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
-    width: 3px; background: #58a6ff; border-radius: 10px 0 0 10px;
-}
-.var-card.alerta::before { background: #f85149; }
-.var-card.ok::before     { background: #3fb950; }
-
-.var-top { display: flex; justify-content: space-between; align-items: flex-start; }
-.var-nombre { font-weight: 700; font-size: 0.95rem; color: #e6edf3; }
-.var-icono  { font-size: 1.4rem; }
-.var-desc   { font-size: 0.75rem; color: #8b949e; margin-top: 0.2rem; }
-
-.var-valor {
-    font-family: 'Share Tech Mono', monospace; font-size: 2rem;
-    font-weight: bold; margin-top: 0.6rem; color: #58a6ff;
-}
-.var-valor.ok     { color: #3fb950; }
-.var-valor.alerta { color: #f85149; }
-.var-unidad { font-size: 0.8rem; color: #8b949e; margin-left: 4px; }
-
-.dist-badge {
-    display: inline-block; font-size: 0.65rem;
-    font-family: 'Share Tech Mono', monospace;
-    background: #21262d; color: #8b949e; border-radius: 4px;
-    padding: 2px 7px; margin-top: 0.4rem; letter-spacing: 0.5px;
+.hdr-badge {
+    font-family: 'JetBrains Mono', monospace; font-size: 0.7rem;
+    background: #1C1F2E; border: 1px solid #2D3140;
+    color: #9CA3AF; padding: 0.4rem 0.9rem; border-radius: 6px;
 }
 
-div[data-testid="stButton"] button {
-    background: linear-gradient(135deg, #1f6feb 0%, #388bfd 100%);
-    color: white; border: none; border-radius: 8px;
-    font-family: 'Share Tech Mono', monospace; font-size: 1rem;
-    letter-spacing: 2px; padding: 0.7rem 2.5rem;
+.proc-header {
+    text-align: center; padding: 0.7rem 0.5rem;
+    border-radius: 8px 8px 0 0; margin-bottom: -2px;
+    font-weight: 700; font-size: 0.9rem; letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.prod-label {
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: flex-start;
+    padding: 0.6rem 0.8rem;
+    background: #1C1F2E; border: 1px solid #2D3140;
+    border-radius: 8px; height: 100%; min-height: 110px;
+}
+.prod-icono { font-size: 1.6rem; line-height: 1; }
+.prod-nombre { font-weight: 700; font-size: 1rem; color: #E5E7EB; letter-spacing: 1px; margin-top: 0.3rem; line-height: 1.2; }
+.prod-id { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: #6B7280; margin-top: 0.2rem; }
+
+.celda {
+    background: #1C1F2E; border: 1px solid #2D3140;
+    border-radius: 8px; padding: 1rem 0.8rem;
+    text-align: center; min-height: 110px;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    position: relative; overflow: hidden;
+}
+.celda::after {
+    content: ''; position: absolute;
+    bottom: 0; left: 0; right: 0; height: 3px; background: #2D3140;
+}
+.celda.ok::after     { background: #10B981; }
+.celda.alerta::after { background: #EF4444; }
+
+.celda-valor {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.8rem; font-weight: 700; color: #6B7280;
+}
+.celda-valor.ok     { color: #34D399; }
+.celda-valor.alerta { color: #F87171; }
+
+.celda-unidad {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem; color: #6B7280; margin-top: 0.25rem; letter-spacing: 1px;
+}
+.celda-dist { font-size: 0.6rem; color: #4B5563; margin-top: 0.4rem; font-family: 'JetBrains Mono', monospace; }
+
+.dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; background: #374151; }
+.dot.ok     { background: #34D399; box-shadow: 0 0 6px #34D399; }
+.dot.alerta { background: #F87171; box-shadow: 0 0 6px #F87171; }
+
+div[data-testid="stButton"] > button {
+    background: linear-gradient(135deg, #B45309 0%, #F59E0B 100%);
+    color: #111318; border: none; border-radius: 8px;
+    font-family: 'Rajdhani', sans-serif; font-weight: 700;
+    font-size: 1rem; letter-spacing: 3px; padding: 0.65rem 2rem;
     width: 100%; text-transform: uppercase;
 }
-div[data-testid="stButton"] button:hover { opacity: 0.88; }
+div[data-testid="stButton"] > button:hover { opacity: 0.85; }
 
-.muestra-badge {
-    font-family: 'Share Tech Mono', monospace; font-size: 0.75rem;
-    color: #8b949e; text-align: right; margin-bottom: 1rem;
+.resumen-card {
+    background: #1C1F2E; border: 1px solid #2D3140;
+    border-radius: 8px; padding: 0.8rem 1.2rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; color: #9CA3AF; margin-top: 1rem;
 }
-.sim-footer {
-    text-align: center; color: #30363d; font-size: 0.72rem;
-    font-family: 'Share Tech Mono', monospace; margin-top: 2.5rem;
-    padding-top: 1rem; border-top: 1px solid #21262d; letter-spacing: 1px;
+.resumen-card b { color: #F59E0B; }
+
+.leyenda {
+    display: flex; gap: 1.5rem; font-size: 0.75rem; color: #6B7280;
+    font-family: 'JetBrains Mono', monospace; justify-content: center;
+    margin-top: 1.2rem; padding-top: 1rem; border-top: 1px solid #2D3140;
 }
 </style>
 """, unsafe_allow_html=True)
-
 
 # ══════════════════════════════════════════════════════════════════
 #  ESTADO DE SESIÓN
 # ══════════════════════════════════════════════════════════════════
 
-if "valores" not in st.session_state:
-    st.session_state.valores = {v.nombre: None for v in VARIABLES}
-if "n_muestras" not in st.session_state:
-    st.session_state.n_muestras = 0
-
+if "resultados" not in st.session_state:
+    st.session_state.resultados = {}
+if "n" not in st.session_state:
+    st.session_state.n = 0
 
 # ══════════════════════════════════════════════════════════════════
-#  INTERFAZ
+#  HEADER
 # ══════════════════════════════════════════════════════════════════
 
-st.markdown("""
-<div class="sim-header">
-    <h1>⬡ SIMULADOR DE PROCESO</h1>
-    <p>Sistema de monitoreo de variables industriales · Modo simulación</p>
+badge_txt = f"SIM #{st.session_state.n:04d}" if st.session_state.n > 0 else "ESPERANDO"
+
+st.markdown(f"""
+<div class="hdr">
+  <div class="hdr-left">
+    <h1>⬡ Simulador de Tiempos de Ciclo</h1>
+    <p>Manufactura · Matriz Producto × Proceso · Modo estocástico</p>
+  </div>
+  <div class="hdr-badge">{badge_txt}</div>
 </div>
 """, unsafe_allow_html=True)
 
-if st.button("▶  GENERAR NUEVA MUESTRA"):
-    for v in VARIABLES:
-        st.session_state.valores[v.nombre] = v.generador()
-    st.session_state.n_muestras += 1
+# ══════════════════════════════════════════════════════════════════
+#  BOTÓN
+# ══════════════════════════════════════════════════════════════════
 
-if st.session_state.n_muestras > 0:
-    st.markdown(
-        f'<div class="muestra-badge">Muestra #{st.session_state.n_muestras:04d}</div>',
-        unsafe_allow_html=True,
-    )
+col_btn, _ = st.columns([2, 3])
+with col_btn:
+    if st.button("▶  GENERAR MUESTRA"):
+        for p in PRODUCTOS:
+            for pr in PROCESOS:
+                key = (p["id"], pr["id"])
+                st.session_state.resultados[key] = MATRIZ[key].generador()
+        st.session_state.n += 1
+        st.rerun()
 
-col_izq, col_der = st.columns(2)
+# ══════════════════════════════════════════════════════════════════
+#  ENCABEZADOS DE PROCESO
+# ══════════════════════════════════════════════════════════════════
 
-for i, var in enumerate(VARIABLES):
-    col = col_izq if i % 2 == 0 else col_der
-    valor = st.session_state.valores[var.nombre]
+col_lbl, col_m, col_f, col_a = st.columns([1.6, 1, 1, 1])
+with col_lbl:
+    st.markdown("<div style='height:52px'></div>", unsafe_allow_html=True)
 
-    if valor is None:
-        estado_card = estado_valor = ""
-        valor_str = "—"
-    else:
-        dentro = var.rango_normal[0] <= valor <= var.rango_normal[1]
-        estado_card = estado_valor = "ok" if dentro else "alerta"
-        fmt = f".{var.decimales}f"
-        valor_str = f"{valor:{fmt}}"
+for col_ui, proc in zip([col_m, col_f, col_a], PROCESOS):
+    with col_ui:
+        st.markdown(f"""
+        <div class="proc-header" style="background:{proc['color']}18;
+             border:1px solid {proc['color']}55; color:{proc['color']};">
+            {proc['icono']} {proc['nombre']}
+        </div>
+        """, unsafe_allow_html=True)
 
-    col.markdown(f"""
-    <div class="var-card {estado_card}">
-        <div class="var-top">
-            <div>
-                <div class="var-nombre">{var.nombre}</div>
-                <div class="var-desc">{var.descripcion}</div>
+st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════
+#  FILAS DE PRODUCTOS
+# ══════════════════════════════════════════════════════════════════
+
+resultados = st.session_state.resultados
+total_ok = total_alerta = 0
+
+for prod in PRODUCTOS:
+    col_lbl, col_m, col_f, col_a = st.columns([1.6, 1, 1, 1])
+
+    with col_lbl:
+        st.markdown(f"""
+        <div class="prod-label">
+            <div class="prod-icono">{prod['icono']}</div>
+            <div class="prod-nombre">{prod['nombre']}</div>
+            <div class="prod-id">{prod['id']}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    for col_ui, proc in zip([col_m, col_f, col_a], PROCESOS):
+        key = (prod["id"], proc["id"])
+        celda = MATRIZ[key]
+        valor = resultados.get(key)
+
+        if valor is None:
+            estado = "idle"
+            valor_str = "—"
+        else:
+            dentro = celda.rango_normal[0] <= valor <= celda.rango_normal[1]
+            estado = "ok" if dentro else "alerta"
+            valor_str = f"{valor:.{celda.decimales}f}"
+            total_ok    += 1 if estado == "ok"    else 0
+            total_alerta += 1 if estado == "alerta" else 0
+
+        with col_ui:
+            st.markdown(f"""
+            <div class="celda {estado}">
+                <div class="celda-valor {estado}">{valor_str}</div>
+                <div class="celda-unidad">
+                    <span class="dot {estado}"></span>{celda.unidad}
+                </div>
+                <div class="celda-dist">{DIST_NOMBRES[proc['id']]}</div>
             </div>
-            <div class="var-icono">{var.icono}</div>
-        </div>
-        <div class="var-valor {estado_valor}">
-            {valor_str}<span class="var-unidad">{var.unidad}</span>
-        </div>
-        <div class="dist-badge">{DIST_LABELS[var.nombre]}</div>
-    </div>
-    """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
-if st.session_state.n_muestras > 0:
-    st.markdown("""
-    <div style="display:flex;gap:1.2rem;font-size:0.75rem;color:#8b949e;
-                margin-top:0.5rem;justify-content:center;">
-        <span><span style="color:#3fb950">●</span> Dentro de rango normal</span>
-        <span><span style="color:#f85149">●</span> Fuera de rango normal</span>
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════════
+#  RESUMEN + LEYENDA
+# ══════════════════════════════════════════════════════════════════
+
+if st.session_state.n > 0:
+    total = total_ok + total_alerta
+    pct_ok = (total_ok / total * 100) if total else 0
+    st.markdown(f"""
+    <div class="resumen-card">
+        Muestra <b>#{st.session_state.n:04d}</b> &nbsp;·&nbsp;
+        Celdas en rango: <b style="color:#34D399">{total_ok}/9</b> &nbsp;·&nbsp;
+        Fuera de rango: <b style="color:#F87171">{total_alerta}/9</b> &nbsp;·&nbsp;
+        Cumplimiento: <b style="color:#F59E0B">{pct_ok:.0f}%</b>
     </div>
     """, unsafe_allow_html=True)
 
 st.markdown("""
-<div class="sim-footer">
-    DISTRIBUCIONES CONFIGURADAS POR DISEÑO · PARÁMETROS NO VISIBLES AL USUARIO FINAL
+<div class="leyenda">
+    <span><span class="dot ok" style="display:inline-block"></span> Dentro de rango normal</span>
+    <span><span class="dot alerta" style="display:inline-block"></span> Fuera de rango normal</span>
+    <span>Tiempos en segundos</span>
 </div>
 """, unsafe_allow_html=True)
