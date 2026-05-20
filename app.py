@@ -23,8 +23,8 @@ PRODUCTOS = [
 ]
 
 PROCESOS = [
-    {"id": "maquinado", "nombre": "Maquinado",          "icono": "🔧", "color": "#F59E0B"},
     {"id": "fundicion", "nombre": "Fundición",           "icono": "🔥", "color": "#EF4444"},
+    {"id": "soldadura", "nombre": "Soldadura",           "icono": "⚡", "color": "#F59E0B"},
     {"id": "acabado",   "nombre": "Acabado Superficial", "icono": "✨", "color": "#10B981"},
 ]
 
@@ -48,39 +48,39 @@ class Celda:
 
 MATRIZ: dict[tuple, Celda] = {
     # ── CARCASA DE BOMBA ─────────────────────────────────────────
-    ("P1", "maquinado"): Celda(
-        generador=lambda: np.random.normal(loc=245, scale=18),
-        rango_normal=(200, 290),
-    ),
     ("P1", "fundicion"): Celda(
         generador=lambda: np.random.lognormal(mean=np.log(520), sigma=0.12),
         rango_normal=(420, 640),
+    ),
+    ("P1", "soldadura"): Celda(
+        generador=lambda: np.random.normal(loc=185, scale=15),
+        rango_normal=(150, 220),
     ),
     ("P1", "acabado"): Celda(
         generador=lambda: np.random.weibull(a=3.5) * 95,
         rango_normal=(55, 135),
     ),
     # ── ENGRANAJE HELICOIDAL ──────────────────────────────────────
-    ("P2", "maquinado"): Celda(
-        generador=lambda: np.random.normal(loc=310, scale=22),
-        rango_normal=(260, 360),
-    ),
     ("P2", "fundicion"): Celda(
         generador=lambda: np.random.lognormal(mean=np.log(390), sigma=0.10),
         rango_normal=(320, 470),
+    ),
+    ("P2", "soldadura"): Celda(
+        generador=lambda: np.random.normal(loc=140, scale=12),
+        rango_normal=(110, 170),
     ),
     ("P2", "acabado"): Celda(
         generador=lambda: np.random.weibull(a=2.8) * 130,
         rango_normal=(70, 185),
     ),
     # ── SOPORTE ESTRUCTURAL ───────────────────────────────────────
-    ("P3", "maquinado"): Celda(
-        generador=lambda: np.random.normal(loc=175, scale=14),
-        rango_normal=(140, 210),
-    ),
     ("P3", "fundicion"): Celda(
         generador=lambda: np.random.lognormal(mean=np.log(680), sigma=0.15),
         rango_normal=(530, 860),
+    ),
+    ("P3", "soldadura"): Celda(
+        generador=lambda: np.random.normal(loc=260, scale=20),
+        rango_normal=(215, 305),
     ),
     ("P3", "acabado"): Celda(
         generador=lambda: np.random.weibull(a=4.0) * 72,
@@ -89,9 +89,9 @@ MATRIZ: dict[tuple, Celda] = {
 }
 
 DIST_NOMBRES = {
-    "maquinado": "Normal",
-    "fundicion":  "LogNormal",
-    "acabado":    "Weibull",
+    "fundicion": "LogNormal",
+    "soldadura": "Normal",
+    "acabado":   "Weibull",
 }
 
 # ══════════════════════════════════════════════════════════════════
